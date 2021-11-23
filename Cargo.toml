@@ -1,0 +1,6 @@
+[package]
+name = "fall-challenge-2020"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
