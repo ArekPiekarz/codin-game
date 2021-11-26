@@ -65,4 +65,5 @@ perform 7) action: Action { id: 80, kind: "CAST", deltas: [0, -1, 1, 0], price: 
 perform 6) action: Action { id: 79, kind: "CAST", deltas: [-1, 1, 0, 0], price: 0, castable: true }
     state before: [AtLeast(2), AtLeast(0), AtLeast(0), AtLeast(0)]
 
-
+does the algorithm need to go from the end to start?
+let's begin at the start
