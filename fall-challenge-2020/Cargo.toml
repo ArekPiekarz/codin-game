@@ -4,4 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+id_tree = "1.8.0"
+id_tree_layout = "2.0.2"
 rand = "0.8.4"
+
+[features]
+visualize = []
+default = ["visualize"]

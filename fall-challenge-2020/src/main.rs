@@ -1,7 +1,8 @@
 #![allow(non_snake_case)]
 
 use std::cell::RefCell;
-use std::io;
+use std::io::stdin;
+use std::ops::Deref;
 use std::rc::Rc;
 
 macro_rules! parseInput {
@@ -11,21 +12,22 @@ macro_rules! parseInput {
 fn main()
 {
     let mut gameState = GameState::new();
+    let mut actionPlan = vec![];
     loop {
         let mut inputLine = String::new();
-        io::stdin().read_line(&mut inputLine).unwrap();
+        stdin().read_line(&mut inputLine).unwrap();
         // eprintln!("{}", inputLine);
         let actionCount = parseInput!(inputLine, i32);
         let mut actions = vec![];
         gameState.exhaustedSpells.clear();
         for _ in 0..actionCount as usize {
             let mut inputLine = String::new();
-            io::stdin().read_line(&mut inputLine).unwrap();
+            stdin().read_line(&mut inputLine).unwrap();
             // eprintln!("{}", inputLine);
             let inputs = inputLine.split(" ").collect::<Vec<_>>();
             let actionId = parseInput!(inputs[0], i32);
             let actionType = inputs[1].trim().to_string();
-            if actionType == "OPPONENT_CAST" {
+            if actionType == "OPPONENT_CAST" || actionType == "LEARN" {
                 continue;
             }
 
@@ -51,7 +53,7 @@ fn main()
             }
         }
         actions.push(Action::Rest);
-        actions.push(Action::Wait);
+        // actions.push(Action::Wait);
 
         // eprintln!("Actions: {}", actions.len());
         // for (index, action) in actions.iter().enumerate() {
@@ -60,7 +62,7 @@ fn main()
 
         for i in 0..2 as usize {
             let mut input_line = String::new();
-            io::stdin().read_line(&mut input_line).unwrap();
+            stdin().read_line(&mut input_line).unwrap();
             // eprintln!("{}", input_line);
             if i != 0 {
                 continue;
@@ -76,8 +78,11 @@ fn main()
             gameState.score = score;
         }
 
-        let action = runMonteCarloTreeSearch(&gameState, &actions);
-        match action {
+        if actionPlan.is_empty() || !canPerformAction(&actionPlan[0], &gameState) {
+            actionPlan = runMonteCarloTreeSearch(&gameState, &actions);
+        }
+        eprintln!("AAA actionPlan (size: {}): {:?}", actionPlan.len(), actionPlan);
+        match actionPlan[0] {
             Action::Brew {id, ..} => {
                 println!("BREW {}", id);
                 gameState.potionsBrewed += 1;
@@ -86,6 +91,7 @@ fn main()
             Action::Rest => println!("REST"),
             Action::Wait => println!("WAIT")
         };
+        actionPlan.remove(0);
         gameState.turns += 1;
     }
 }
@@ -114,15 +120,18 @@ impl Action
 type Price = i32;
 type Score = i32;
 
-fn runMonteCarloTreeSearch(gameState: &GameState, actions: &[Action]) -> Action
+fn runMonteCarloTreeSearch(gameState: &GameState, actions: &[Action]) -> Vec<Action>
 {
     let mut tree = Tree::new();
     let rootNode = tree.getRoot();
     fillRootNode(&rootNode, &gameState);
     makeAvailableActionsForNode(&rootNode, &mut tree, actions);
+    if rootNode.borrow().children.is_empty() {
+        return vec![Action::Wait];
+    }
 
     let mut currentNode = Rc::clone(&rootNode);
-    for _ in 0..100 {
+    for _ in 0..1000 {
         if currentNode.borrow().isLeaf() {
             if currentNode.borrow().visits == 0 {
                 let score = rollout(&currentNode, actions);
@@ -130,8 +139,11 @@ fn runMonteCarloTreeSearch(gameState: &GameState, actions: &[Action]) -> Action
                 currentNode = findBestChildNodeToExplore(&rootNode, &tree).unwrap();
             } else {
                 makeAvailableActionsForNode(&currentNode, &mut tree, actions);
+                if currentNode.borrow().children.is_empty() {
+                    break;
+                }
                 let childNodeId = currentNode.borrow().children[0];
-                currentNode = tree.getNode(childNodeId).unwrap();
+                currentNode = tree.getNode(childNodeId);
                 let score = rollout(&currentNode, actions);
                 backpropagate(&currentNode, score, &tree);
                 currentNode = findBestChildNodeToExplore(&rootNode, &tree).unwrap();
@@ -144,9 +156,9 @@ fn runMonteCarloTreeSearch(gameState: &GameState, actions: &[Action]) -> Action
         }
     }
 
-    // dbg!(&tree);
-    findChildNodeWithHighestScore(&rootNode, &tree).borrow().action.clone()
-    // dbg!(findBestChildNodeToExplore(&rootNode, &tree).unwrap().borrow()).action.clone()
+    #[cfg(feature = "visualize")]
+    visualizeTree(&tree);
+    findBestActionPlan(&tree)
 }
 
 fn fillRootNode(rootNode: &Rc<RefCell<Node>>, gameState: &GameState)
@@ -162,16 +174,12 @@ fn findBestChildNodeToExplore(parentNode: &Rc<RefCell<Node>>, tree: &Tree) -> Op
     let parentNode = parentNode.borrow();
     let parentNodeVisits = parentNode.visits;
     for childNodeId in &parentNode.children {
-        // eprintln!("AAA childNodeId: {}", childNodeId);
-        let childNode = tree.getNode(*childNodeId).unwrap();
+        let childNode = tree.getNode(*childNodeId);
         let childNode = childNode.borrow();
         if childNode.visits == 0 {
-            // eprintln!("  AAA gettinng node with 0 visits: {}", *childNodeId);
-            return tree.getNode(*childNodeId);
+            return Some(tree.getNode(*childNodeId));
         } else {
-            // eprintln!("  AAA childNode.value: {}, parentNodeVisits: {}, childNode.visits: {}", childNode.value, parentNodeVisits, childNode.visits);
             let grade = (childNode.value as f32) + ((parentNodeVisits as f32).ln() / childNode.visits as f32).sqrt();
-            // eprintln!("  AAA grade: {}", grade);
             match &bestNodeGradeOpt {
                 Some(bestNodeGrade) => {
                     if grade > bestNodeGrade.grade {
@@ -182,20 +190,34 @@ fn findBestChildNodeToExplore(parentNode: &Rc<RefCell<Node>>, tree: &Tree) -> Op
             }
         }
     }
-    // match dbg!(bestNodeGradeOpt) {
     match bestNodeGradeOpt {
-        // Some(NodeGrade{grade, nodeId}) => dbg!(tree.getNode(nodeId)),
-        Some(NodeGrade{grade: _, nodeId}) => tree.getNode(nodeId),
+        Some(NodeGrade{grade: _, nodeId}) => Some(tree.getNode(nodeId)),
         None => None
     }
 }
 
-fn findChildNodeWithHighestScore(parentNode: &Rc<RefCell<Node>>, tree: &Tree) -> Rc<RefCell<Node>>
+fn findBestActionPlan(tree: &Tree) -> Vec<Action>
+{
+    let mut actionPlan = vec![];
+    let mut currentNode = tree.getRoot();
+    loop
+    {
+        let bestChildNode = findChildNodeWithHighestValue(&currentNode, tree);
+        actionPlan.push(bestChildNode.borrow().action.clone());
+        if bestChildNode.borrow().isLeaf() {
+            break;
+        }
+        currentNode = bestChildNode;
+    }
+    actionPlan
+}
+
+fn findChildNodeWithHighestValue(parentNode: &Rc<RefCell<Node>>, tree: &Tree) -> Rc<RefCell<Node>>
 {
     let mut bestNodeGradeOpt: Option<NodeGrade> = None;
     let parentNode = parentNode.borrow();
     for childNodeId in &parentNode.children {
-        let childNode = tree.getNode(*childNodeId).unwrap();
+        let childNode = tree.getNode(*childNodeId);
         let childNode = childNode.borrow();
 
         let grade = childNode.value;
@@ -209,32 +231,37 @@ fn findChildNodeWithHighestScore(parentNode: &Rc<RefCell<Node>>, tree: &Tree) ->
         }
     }
 
-    tree.getNode(bestNodeGradeOpt.unwrap().nodeId).unwrap()
+    tree.getNode(bestNodeGradeOpt.unwrap().nodeId)
 }
 
-fn rollout(currentNode: &Rc<RefCell<Node>>, actions: &[Action]) -> Score
+fn rollout(currentNode: &Rc<RefCell<Node>>, allActions: &[Action]) -> Score
 {
     let mut state = currentNode.borrow().state.clone();
     loop {
-        if isTerminalState(&state) {
-            // return dbg!(calculateStateScore(&state));
+        let possibleActions = calculatePossibleActions(allActions, &state);
+        if isTerminalState(&state, &possibleActions) {
             return calculateStateScore(&state);
         }
-        loop {
-            let action = chooseRandomAction(actions);
-            if canPerformAction(action, &state) {
-                state = calculateGameStateAfterAction(&state, action);
-                break;
-            }
-        }
+
+        let action = chooseRandomAction(&possibleActions);
+        state = calculateGameStateAfterAction(&state, action);
     }
 }
 
-fn isTerminalState(state: &GameState) -> bool
+fn calculatePossibleActions(allActions: &[Action], state: &GameState) -> Vec<Action>
 {
-    // dbg!(state.turns);
-    // dbg!(state.potionsBrewed);
-    state.turns >= MAX_TURNS || state.potionsBrewed >= MAX_POTIONS
+    let mut possibleActions = vec![];
+    for action in allActions {
+        if canPerformAction(action, state) {
+            possibleActions.push(action.clone());
+        }
+    }
+    possibleActions
+}
+
+fn isTerminalState(state: &GameState, possibleActions: &[Action]) -> bool
+{
+    possibleActions.is_empty() || state.turns >= MAX_TURNS || state.potionsBrewed >= MAX_POTIONS
 }
 
 const MAX_TURNS: u32 = 100;
@@ -265,7 +292,7 @@ fn backpropagate(currentNode: &Rc<RefCell<Node>>, score: Score, tree: &Tree)
         currentNode.borrow_mut().visits += 1;
         let parent = currentNode.borrow_mut().parent;
         match parent {
-            Some(parentNodeId) => currentNode = tree.getNode(parentNodeId).unwrap(),
+            Some(parentNodeId) => currentNode = tree.getNode(parentNodeId),
             None => return
         }
     }
@@ -297,18 +324,14 @@ impl Tree
         Rc::clone(&self.nodes[0])
     }
 
-    fn getNode(&self, id: NodeId) -> Option<Rc<RefCell<Node>>>
+    fn getNode(&self, id: NodeId) -> Rc<RefCell<Node>>
     {
-        match self.nodes.get(id) {
-            Some(node) => Some(Rc::clone(node)),
-            None => None
-        }
+        Rc::clone(&self.nodes[id])
     }
 
     fn addNode(&mut self, state: GameState, parentNodeId: NodeId, action: Action) -> NodeId
     {
         let newNodeId = self.nodes.len();
-        // self.nodes.push(Rc::new(RefCell::new(dbg!(Node::new(newNodeId, state, Some(parentNodeId))))));
         self.nodes.push(Rc::new(RefCell::new(Node::new(newNodeId, state, Some(parentNodeId), action))));
         newNodeId
     }
@@ -317,7 +340,7 @@ impl Tree
 const NO_PARENT: Option<NodeId> = None;
 type NodeId = usize;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Node
 {
     id: NodeId,
@@ -462,5 +485,45 @@ fn applyDelta(ownedIngredients: &mut Ingredients, ingredientsDelta: &Ingredients
 {
     for (owned, delta) in ownedIngredients.into_iter().zip(ingredientsDelta) {
         *owned += delta;
+    }
+}
+
+#[cfg(feature = "visualize")]
+fn visualizeTree(tree: &Tree)
+{
+    let mut visualTree = id_tree::TreeBuilder::new().build();
+    let rootNode = tree.getRoot().borrow().deref().clone();
+    let visualRootId = visualTree.insert(id_tree::Node::new(rootNode.clone()), id_tree::InsertBehavior::AsRoot).unwrap();
+    addChildrenToIdTree(&rootNode, &tree, visualRootId, &mut visualTree);
+    id_tree_layout::Layouter::new(&visualTree).with_file_path(std::path::Path::new("tree.svg")).write().unwrap();
+}
+
+#[cfg(feature = "visualize")]
+fn addChildrenToIdTree(node: &Node, tree: &Tree, visualNodeId: id_tree::NodeId, visualTree: &mut id_tree::Tree<Node>)
+{
+    for childNodeId in &node.children {
+        let childNode = tree.getNode(*childNodeId).borrow().deref().clone();
+        let visualChildId = visualTree.insert(id_tree::Node::new(childNode.clone()), id_tree::InsertBehavior::UnderNode(&visualNodeId)).unwrap();
+        addChildrenToIdTree(&childNode, tree, visualChildId, visualTree);
+    }
+}
+
+#[cfg(feature = "visualize")]
+impl id_tree_layout::Visualize for Node
+{
+    fn visualize(&self) -> std::string::String
+    {
+        format!("id {}, action: {}, value: {}", self.id, formatActionShort(&self.action), self.value)
+    }
+}
+
+#[cfg(feature = "visualize")]
+fn formatActionShort(action: &Action) -> String
+{
+    match action {
+        Action::Brew{id, ..} => format!("BREW {}", id),
+        Action::Cast{id, ..} => format!("CAST {}", id),
+        Action::Rest => format!("REST"),
+        Action::Wait => format!("WAIT")
     }
 }
