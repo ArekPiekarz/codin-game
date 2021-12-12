@@ -19,7 +19,7 @@ fn main()
         stdin().read_line(&mut inputLine).unwrap();
         // eprintln!("{}", inputLine);
         let actionCount = parseInput!(inputLine, i32);
-        gameState.actionRecipes.clear();
+        gameState.recipes.clear();
         for _ in 0..actionCount as usize {
             let mut inputLine = String::new();
             stdin().read_line(&mut inputLine).unwrap();
@@ -41,23 +41,17 @@ fn main()
             let castable = toBool(parseInput!(inputs[9], i32));
             let repeatable = toBool(parseInput!(inputs[10], i32));
 
-            gameState.actionRecipes.push(ActionRecipe::new(
+            gameState.addRecipe(
                 actionId,
                 &actionType,
                 [delta0, delta1, delta2, delta3],
                 price,
                 readAheadTaxOrUrgencyBonus,
                 castable,
-                repeatable
-            ));
+                repeatable);
         }
-        gameState.actionRecipes.push(ActionRecipe::Rest);
-        // gameState.actionRecipes.push(ActionRecipe::Wait);
 
-        eprintln!("Actions recipes: {}", gameState.actionRecipes.len());
-        for (index, actionRecipe) in gameState.actionRecipes.iter().enumerate() {
-            eprintln!("{}) action recipe: {:?}", index, actionRecipe);
-        }
+        gameState.printRecipes();
 
         for i in 0..2 as usize {
             let mut input_line = String::new();
@@ -88,24 +82,6 @@ fn main()
     }
 }
 
-fn findCheapestSpellToLearn(actionRecipes: &[ActionRecipe]) -> ActionId
-{
-    let mut cheapestId = u32::MAX;
-    let mut cheapestTax = u32::MAX;
-    for actionRecipe in actionRecipes {
-        match actionRecipe {
-            ActionRecipe::Learn{id, ingredientsDelta: _, repeatable: _, readAheadTax} => {
-                if *readAheadTax < cheapestTax {
-                    cheapestId = *id;
-                    cheapestTax = *readAheadTax;
-                }
-            },
-            _ => ()
-        }
-    }
-    cheapestId
-}
-
 fn toBool(value: i32) -> bool
 {
     match value {
@@ -122,7 +98,7 @@ fn performAction(actionPlan: &mut ActionPlan, gameState: &mut GameState)
             println!("BREW {}", id);
             gameState.potionsBrewed += 1;
         },
-        Action::Cast{id, ingredientsDelta: _, times} => println!("CAST {} {}", id, times),
+        Action::Cast{idOpt, ingredientsDelta, times} => performCast(idOpt, &ingredientsDelta, times, &gameState.recipes.casting),
         Action::Learn{id, ..} => println!("LEARN {}", id),
         Action::Rest => println!("REST"),
         Action::Wait => println!("WAIT")
@@ -134,59 +110,94 @@ fn performAction(actionPlan: &mut ActionPlan, gameState: &mut GameState)
 
 type ActionPlan = Vec<Action>;
 
-#[derive(Clone, Debug)]
-enum ActionRecipe
+fn performCast(idOpt: Option<Id>, ingredientsDelta: &IngredientsDelta, times: CastTimes, recipes: &[CastRecipe])
 {
-    Brew{id: ActionId, ingredientsDelta: IngredientsDelta, price: Price},
-    Cast{id: ActionId, ingredientsDelta: IngredientsDelta, castable: bool, repeatable: bool},
-    Learn{id: ActionId, ingredientsDelta: IngredientsDelta, repeatable: bool, readAheadTax: u32},
-    Rest
+    let id = match idOpt {
+        Some(id) => id,
+        None => findSpellIdByIngredients(ingredientsDelta, recipes)
+    };
+    // TODO optimization - fix id in the rest of actionPlan
+    println!("CAST {} {}", id, times);
 }
 
-type ReadAheadTax = u32;
-
-impl ActionRecipe
+fn findSpellIdByIngredients(ingredientsDelta: &IngredientsDelta, recipes: &[CastRecipe]) -> Id
 {
-    fn new(
-        id: ActionId,
-        kind: &str,
-        ingredientsDelta: IngredientsDelta,
-        price: Price,
-        readAheadTaxOrUrgencyBonus: i32,
-        castable: bool,
-        repeatable: bool)
-        -> Self
+    assertOnlyOneSpell(ingredientsDelta, recipes);
+    recipes.iter().find(|recipe| recipe.ingredientsDelta == *ingredientsDelta).unwrap().idOpt.unwrap()
+}
+
+#[derive(Clone, Debug)]
+struct Recipes
+{
+    brewing: Vec<BrewRecipe>,
+    learning: Vec<LearnRecipe>,
+    casting: Vec<CastRecipe>
+}
+
+impl Recipes
+{
+    fn new() -> Self
     {
-        match kind {
-            "BREW" => Self::Brew{id, ingredientsDelta, price},
-            "CAST" => Self::Cast{id, ingredientsDelta, castable, repeatable},
-            "LEARN" => Self::Learn{
-                id, ingredientsDelta, repeatable, readAheadTax: readAheadTaxOrUrgencyBonus as ReadAheadTax},
-            _ => panic!("unexpected action recipe kind: {}", kind)
-        }
+        Self{brewing: vec![], learning: vec![], casting: vec![]}
+    }
+
+    fn clear(&mut self)
+    {
+        self.brewing.clear();
+        self.learning.clear();
+        self.casting.clear();
     }
 }
 
 #[derive(Clone, Debug)]
+struct BrewRecipe
+{
+    id: Id,
+    ingredientsDelta: IngredientsDelta,
+    price: Price
+}
+
+#[derive(Clone, Debug)]
+struct LearnRecipe
+{
+    id: Id,
+    ingredientsDelta: IngredientsDelta,
+    repeatable: bool,
+    readAheadTax: u32
+}
+
+#[derive(Clone, Debug)]
+struct CastRecipe
+{
+    idOpt: Option<Id>,
+    ingredientsDelta: IngredientsDelta,
+    castable: bool,
+    repeatable: bool
+}
+
+type Id = u32;
+type ReadAheadTax = u32;
+
+#[derive(Clone, Debug)]
 enum Action
 {
-    Brew{id: ActionId, ingredientsDelta: IngredientsDelta, price: Price},
-    Cast{id: ActionId, ingredientsDelta: IngredientsDelta, times: u32},
-    Learn{id: ActionId, ingredientsDelta: IngredientsDelta, repeatable: bool, readAheadTax: ReadAheadTax},
+    Brew{id: Id, ingredientsDelta: IngredientsDelta, price: Price},
+    Learn{id: Id, ingredientsDelta: IngredientsDelta, repeatable: bool, readAheadTax: ReadAheadTax},
+    Cast{idOpt: Option<Id>, ingredientsDelta: IngredientsDelta, times: CastTimes},
     Rest,
     Wait
 }
 
-type ActionId = u32;
 type Price = i32;
 type Score = i32;
+type CastTimes = u32;
 
 fn runMonteCarloTreeSearch(gameState: &GameState) -> Vec<Action>
 {
     let mut tree = Tree::new();
     let rootNode = tree.getRoot();
     fillRootNode(&rootNode, &gameState);
-    makeChildNodesFromAvailableActions(&rootNode, &mut tree);
+    makeChildNodesFromRecipes(&rootNode, &mut tree);
     if rootNode.borrow().children.is_empty() {
         return vec![Action::Wait];
     }
@@ -199,7 +210,7 @@ fn runMonteCarloTreeSearch(gameState: &GameState) -> Vec<Action>
                 backpropagate(&currentNode, score, &tree);
                 currentNode = findBestChildNodeToExplore(&rootNode, &tree).unwrap();
             } else {
-                makeChildNodesFromAvailableActions(&currentNode, &mut tree);
+                makeChildNodesFromRecipes(&currentNode, &mut tree);
                 if currentNode.borrow().children.is_empty() {
                     break;
                 }
@@ -224,10 +235,7 @@ fn runMonteCarloTreeSearch(gameState: &GameState) -> Vec<Action>
 
 fn fillRootNode(rootNode: &Rc<RefCell<Node>>, gameState: &GameState)
 {
-    let mut rootNode = rootNode.borrow_mut();
-    rootNode.state.ingredients = gameState.ingredients;
-    rootNode.state.actionRecipes = gameState.actionRecipes.clone();
-    rootNode.state.score = gameState.score;
+    rootNode.borrow_mut().state = gameState.clone();
 }
 
 fn findBestChildNodeToExplore(parentNode: &Rc<RefCell<Node>>, tree: &Tree) -> Option<Rc<RefCell<Node>>>
@@ -424,7 +432,7 @@ type IngredientsDelta = [i32;4];
 struct GameState
 {
     ingredients: Ingredients,
-    actionRecipes: Vec<ActionRecipe>,
+    recipes: Recipes,
     score: i32,
     potionsBrewed: u32,
     turns: u32
@@ -434,86 +442,136 @@ impl GameState
 {
     fn new() -> Self
     {
-        Self{ingredients: [0, 0, 0, 0], actionRecipes: vec![], score: 0, potionsBrewed: 0, turns: 0}
+        Self{ingredients: [0, 0, 0, 0], recipes: Recipes::new(), score: 0, potionsBrewed: 0, turns: 0}
     }
-}
 
-#[derive(Clone, Debug)]
-struct ExhaustedSpell
-{
-    id: ActionId
-}
-
-impl ExhaustedSpell
-{
-    fn new(id: ActionId) -> Self
+    fn addRecipe(
+        &mut self,
+        id: Id,
+        kind: &str,
+        ingredientsDelta: IngredientsDelta,
+        price: Price,
+        readAheadTaxOrUrgencyBonus: i32,
+        castable: bool,
+        repeatable: bool)
     {
-        Self{id}
+        match kind {
+            "BREW"  => self.recipes.brewing.push(BrewRecipe{id, ingredientsDelta, price}),
+            "CAST"  => self.recipes.casting.push(CastRecipe{idOpt: Some(id), ingredientsDelta, castable, repeatable}),
+            "LEARN" => self.recipes.learning.push(LearnRecipe{
+                id, ingredientsDelta, repeatable, readAheadTax: readAheadTaxOrUrgencyBonus as ReadAheadTax}),
+            _ => panic!("unexpected action recipe kind: {}", kind)
+        }
+    }
+
+    fn printRecipes(&self)
+    {
+        eprintln!("Recipes: {}", self.countRecipes());
+        let mut index = 0;
+        for recipe in &self.recipes.brewing {
+            eprintln!("{}) {:?}", index, recipe);
+            index += 1;
+        }
+        for recipe in &self.recipes.learning {
+            eprintln!("{}) {:?}", index, recipe);
+            index += 1;
+        }
+        for recipe in &self.recipes.casting {
+            eprintln!("{}) {:?}", index, recipe);
+            index += 1;
+        }
+    }
+
+    fn countRecipes(&self) -> usize
+    {
+        self.recipes.brewing.len() + self.recipes.learning.len() + self.recipes.casting.len()
     }
 }
 
-
-fn makeChildNodesFromAvailableActions(currentNode: &Rc<RefCell<Node>>, tree: &mut Tree)
+fn makeChildNodesFromRecipes(currentNode: &Rc<RefCell<Node>>, tree: &mut Tree)
 {
     let mut currentNode = currentNode.borrow_mut();
-    let mut currentNode = currentNode.deref_mut();
-    for actionRecipe in &currentNode.state.actionRecipes {
-        let performableActions = makePerformableActionsFromRecipe(actionRecipe, &currentNode.state);
-        for action in performableActions {
-            let childNodeId = tree.addNode(calculateGameStateAfterAction(&currentNode.state, &action), currentNode.id, action);
-            currentNode.children.push(childNodeId);
-        }
+    let currentNode = currentNode.deref_mut();
+    let performableActions = makePerformableActionsFromRecipes(&currentNode.state);
+    makeChildNodesFromPerformableActions(performableActions, currentNode, tree);
+}
+
+fn makeChildNodesFromPerformableActions(actions: Vec<Action>, currentNode: &mut Node, tree: &mut Tree)
+{
+    for action in actions {
+        let childNodeId = tree.addNode(
+            calculateGameStateAfterAction(&currentNode.state, &action), currentNode.id, action);
+        currentNode.children.push(childNodeId);
     }
 }
 
 fn makePerformableActionsFromRecipes(gameState: &GameState) -> Vec<Action>
 {
     let mut actions = vec![];
-    for actionRecipe in &gameState.actionRecipes {
-        actions.extend(makePerformableActionsFromRecipe(actionRecipe, gameState));
+    for recipe in &gameState.recipes.brewing {
+        actions.extend(makePerformableActionsFromBrewRecipe(recipe, &gameState));
     }
+    for recipe in &gameState.recipes.learning {
+        actions.extend(makePerformableActionsFromLearnRecipe(recipe, &gameState));
+    }
+    for recipe in &gameState.recipes.casting {
+        actions.extend(makePerformableActionsFromCastRecipe(recipe, &gameState));
+    }
+    actions.extend(makePerformableActionsForResting(&gameState.recipes.casting));
     actions
 }
 
-fn makePerformableActionsFromRecipe(actionRecipe: &ActionRecipe, gameState: &GameState) -> Vec<Action>
+fn makePerformableActionsFromBrewRecipe(recipe: &BrewRecipe, gameState: &GameState) -> Vec<Action>
 {
-    let mut actions = vec![];
-    match actionRecipe {
-        ActionRecipe::Brew{id, ingredientsDelta, price} => {
-            pushIfCanPerformAction(Action::Brew{id: *id, ingredientsDelta: *ingredientsDelta, price: *price}, &mut actions, gameState);
-        },
-        ActionRecipe::Cast{id, ingredientsDelta, castable, repeatable} => {
-            actions = makePerformableCastsFromRecipe(*id, ingredientsDelta, *castable, *repeatable, gameState)
-        },
-        ActionRecipe::Learn{id, ingredientsDelta, repeatable, readAheadTax} => {
-            pushIfCanPerformAction(Action::Learn{
-                id: *id, ingredientsDelta: *ingredientsDelta, repeatable: *repeatable, readAheadTax: *readAheadTax}, &mut actions, gameState);
-        }
-        ActionRecipe::Rest => {
-            pushIfCanPerformAction(Action::Rest, &mut actions, gameState);
-        }
+    if canBrewRecipe(&recipe.ingredientsDelta, &gameState.ingredients) {
+        vec![Action::Brew{id: recipe.id, ingredientsDelta: recipe.ingredientsDelta, price: recipe.price}]
+    } else {
+        vec![]
     }
-    actions
 }
 
-fn makePerformableCastsFromRecipe(id: ActionId, ingredientsDelta: &IngredientsDelta, castable: bool, repeatable: bool, gameState: &GameState) -> Vec<Action>
+fn makePerformableActionsFromCastRecipe(recipe: &CastRecipe, gameState: &GameState) -> Vec<Action>
 {
     let mut actions = vec![];
-    if !castable {
+    if !recipe.castable {
         return actions;
     }
 
-    if repeatable {
+    if recipe.repeatable {
         loop {
-            let action = Action::Cast{id, ingredientsDelta: *ingredientsDelta, times: (actions.len() as u32) + 1};
+            let action = Action::Cast{
+                idOpt: recipe.idOpt, ingredientsDelta: recipe.ingredientsDelta, times: (actions.len() as u32) + 1};
             if !pushIfCanPerformAction(action, &mut actions, gameState) {
                 break;
             }
         }
     } else {
-        pushIfCanPerformAction(Action::Cast{id, ingredientsDelta: *ingredientsDelta, times: 1}, &mut actions, gameState);
+        pushIfCanPerformAction(
+            Action::Cast{idOpt: recipe.idOpt, ingredientsDelta: recipe.ingredientsDelta, times: 1}, &mut actions, gameState);
     }
     actions
+}
+
+fn makePerformableActionsFromLearnRecipe(recipe: &LearnRecipe, gameState: &GameState) -> Vec<Action>
+{
+    if canLearnSpell(recipe.id, recipe.readAheadTax, gameState) {
+        vec![Action::Learn{
+            id: recipe.id,
+            ingredientsDelta: recipe.ingredientsDelta,
+            repeatable: recipe.repeatable,
+            readAheadTax: recipe.readAheadTax}]
+    } else {
+        vec![]
+    }
+}
+
+fn makePerformableActionsForResting(recipes: &[CastRecipe]) -> Vec<Action>
+{
+    if canRest(recipes) {
+        vec![Action::Rest]
+    } else {
+        vec![]
+    }
 }
 
 fn pushIfCanPerformAction(action: Action, actions: &mut Vec<Action>, gameState: &GameState) -> bool
@@ -530,9 +588,9 @@ fn canPerformAction(action: &Action, state: &GameState) -> bool
 {
     match action {
         Action::Brew{id: _, ingredientsDelta: recipeIngredientsDelta, price: _} => canBrewRecipe(recipeIngredientsDelta, &state.ingredients),
-        Action::Cast{id, ingredientsDelta: spellIngredientsDelta, times} => canCastSpell(*id, spellIngredientsDelta, *times, state),
-        Action::Learn{id: _, ingredientsDelta: _, repeatable: _, readAheadTax} => canLearnSpell(*readAheadTax, &state.ingredients),
-        Action::Rest => canRest(&state.actionRecipes),
+        Action::Cast{idOpt: _, ingredientsDelta: spellIngredientsDelta, times} => canCastSpell(spellIngredientsDelta, *times, state),
+        Action::Learn{id, ingredientsDelta: _, repeatable: _, readAheadTax} => canLearnSpell(*id, *readAheadTax, state),
+        Action::Rest => canRest(&state.recipes.casting),
         Action::Wait => true
     }
 }
@@ -547,9 +605,10 @@ fn canBrewRecipe(recipeIngredientsDelta: &IngredientsDelta, ownedIngredients: &I
     true
 }
 
-fn canCastSpell(id: ActionId, spellIngredientsDelta: &IngredientsDelta, times: u32, gameState: &GameState) -> bool
+fn canCastSpell(spellIngredientsDelta: &IngredientsDelta, times: u32, gameState: &GameState) -> bool
 {
-    if isSpellExhausted(id, gameState) {
+    // TODO check if id is on the list of recipes?
+    if isSpellExhausted(spellIngredientsDelta, gameState) {
         return false;
     }
 
@@ -571,35 +630,27 @@ fn canCastSpell(id: ActionId, spellIngredientsDelta: &IngredientsDelta, times: u
     true
 }
 
-fn canLearnSpell(readAheadTax: ReadAheadTax, ownedIngredients: &Ingredients) -> bool
+fn canLearnSpell(id: Id, readAheadTax: ReadAheadTax, gameState: &GameState) -> bool
 {
-    readAheadTax <= (ownedIngredients[0] as ReadAheadTax)
+    gameState.recipes.learning.iter().find(|recipe| recipe.id == id).is_some()
+    && readAheadTax <= (gameState.ingredients[0] as ReadAheadTax)
 }
 
-fn canRest(actionRecipes: &[ActionRecipe]) -> bool
+fn canRest(recipes: &[CastRecipe]) -> bool
 {
-    for recipe in actionRecipes {
-        match recipe {
-            ActionRecipe::Cast {id: _, ingredientsDelta: _, castable, repeatable: _} => {
-                if !castable {
-                    return true;
-                }
-            },
-            _ => ()
+    for recipe in recipes {
+        if !recipe.castable {
+            return true;
         }
     }
     false
 }
 
-fn isSpellExhausted(spellId: ActionId, gameState: &GameState) -> bool
+fn isSpellExhausted(ingredientsDelta: &IngredientsDelta, gameState: &GameState) -> bool
 {
-    gameState.actionRecipes.iter().find(|recipe|
-        if let ActionRecipe::Cast{id, ingredientsDelta, castable, repeatable} = recipe {
-            *id == spellId && !castable
-        } else {
-            false
-        }
-    ).is_some()
+    assertOnlyOneSpell(ingredientsDelta, &gameState.recipes.casting);
+    gameState.recipes.casting.iter().find(|recipe|
+        recipe.ingredientsDelta == *ingredientsDelta && !recipe.castable).is_some()
 }
 
 const MAX_INGREDIENT_COUNT: i32 = 10;
@@ -613,35 +664,26 @@ fn calculateGameStateAfterAction(currentState: &GameState, action: &Action) -> G
             newState.score += price;
             newState.potionsBrewed += 1;
         },
-        Action::Cast{id, ingredientsDelta, times} => {
+        Action::Cast{idOpt: _, ingredientsDelta, times} => {
             for _ in 0..*times {
                 applyDelta(&mut newState.ingredients, &ingredientsDelta);
             }
-            match findSpellRecipe(*id, &mut newState.actionRecipes).unwrap() {
-                ActionRecipe::Cast{id, ingredientsDelta, castable, repeatable} => *castable = false,
-                _ => panic!("spell with id {} was not found in action recipes", id)
-            }
-
+            exhaustSpell(ingredientsDelta, &mut newState);
         },
-        Action::Learn{id, ingredientsDelta, repeatable, readAheadTax: _} => {
-            let tomeSpellIndex = newState.actionRecipes.iter().enumerate().find(|(index, recipe)|
-                if let ActionRecipe::Learn{id: currentId, ..} = recipe {
-                    currentId == id
-                } else {
-                    false
-                }
-            ).unwrap().0;
-            newState.actionRecipes.remove(tomeSpellIndex);
-            // TODO new id is probably incorrect, instead make it an option and if not present, search by ingredients
-            newState.actionRecipes.push(
-                ActionRecipe::Cast{id: *id, ingredientsDelta: *ingredientsDelta, castable: true, repeatable: *repeatable});
-            // TODO update readAheadTax of remaining spells to learn according to their new position (some will be unchanged, some will decrement)
+        Action::Learn{id: _, ingredientsDelta, repeatable, readAheadTax} => {
+            let spellIndex = *readAheadTax as usize;
+            newState.recipes.learning.remove(spellIndex);
+            for recipe in &mut newState.recipes.learning[spellIndex..] {
+                recipe.readAheadTax -= 1;
+            }
+            newState.recipes.casting.push(
+                CastRecipe{idOpt: None, ingredientsDelta: *ingredientsDelta, castable: true, repeatable: *repeatable});
             // TODO include taking taxCount here and in canPerformAction (check what are the rules if there are not enough slots in the inventory)
-            // TODO include giving out ingredients according to readAheadTax
+            // TODO include giving out ingredients according to readAheadTax - need support for taxCount field
             // TODO do tome spells appear in random order?
         }
         Action::Rest => {
-            refreshExhaustedSpells(&mut newState.actionRecipes)
+            refreshExhaustedSpells(&mut newState.recipes.casting)
         },
         Action::Wait => ()
     };
@@ -656,25 +698,25 @@ fn applyDelta(ownedIngredients: &mut Ingredients, ingredientsDelta: &Ingredients
     }
 }
 
-fn findSpellRecipe(spellId: ActionId, actionRecipes: &mut Vec<ActionRecipe>) -> Option<&mut ActionRecipe>
+fn exhaustSpell(ingredientsDelta: &IngredientsDelta, gameState: &mut  GameState)
 {
-    actionRecipes.iter_mut().find(|recipe|
-        match recipe {
-            ActionRecipe::Cast{id, ..} => *id == spellId,
-            _ => false
-        }
-    )
+    assertOnlyOneSpell(ingredientsDelta, &gameState.recipes.casting);
+    gameState.recipes.casting.iter_mut().find(|recipe| recipe.ingredientsDelta == *ingredientsDelta)
+        .unwrap().castable = false;
 }
 
-fn refreshExhaustedSpells(actionRecipes: &mut Vec<ActionRecipe>)
+fn refreshExhaustedSpells(recipes: &mut Vec<CastRecipe>)
 {
-    for recipe in actionRecipes {
-        if let ActionRecipe::Cast{id, ingredientsDelta, castable, repeatable} = recipe {
-            if !*castable {
-                *castable = true;
-            }
+    for recipe in recipes {
+        if !recipe.castable {
+            recipe.castable = true;
         }
     }
+}
+
+fn assertOnlyOneSpell(ingredientsDelta: &IngredientsDelta, recipes: &[CastRecipe])
+{
+    assert_eq!(recipes.iter().filter(|recipe| recipe.ingredientsDelta == *ingredientsDelta).count(), 1);
 }
 
 #[cfg(feature = "visualize")]
@@ -711,9 +753,18 @@ fn formatActionShortly(action: &Action) -> String
 {
     match action {
         Action::Brew{id, ..} => format!("BREW {}", id),
-        Action::Cast{id, ..} => format!("CAST {}", id),
+        Action::Cast{idOpt, ingredientsDelta, times} => formatCastShortly(*idOpt, ingredientsDelta, *times),
         Action::Learn{id, ..} => format!("LEARN {}", id),
         Action::Rest => format!("REST"),
         Action::Wait => format!("WAIT")
+    }
+}
+
+#[cfg(feature = "visualize")]
+fn formatCastShortly(idOpt: Option<Id>, ingredientsDelta: &IngredientsDelta, times: CastTimes) -> String
+{
+    match idOpt {
+        Some(id) => format!("CAST {} {}", id, times),
+        None => format!("CAST ? {} ({:?})", times, ingredientsDelta)
     }
 }
