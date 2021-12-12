@@ -35,7 +35,7 @@ fn main()
             let delta1 = parseInput!(inputs[3], i32);
             let delta2 = parseInput!(inputs[4], i32);
             let delta3 = parseInput!(inputs[5], i32);
-            let price = parseInput!(inputs[6], i32);
+            let price = parseInput!(inputs[6], Price);
             let readAheadTaxOrUrgencyBonus = parseInput!(inputs[7], i32);
             let _taxCountOrUrgencyBonusCount = parseInput!(inputs[8], i32);
             let castable = toBool(parseInput!(inputs[9], i32));
@@ -65,7 +65,7 @@ fn main()
             let ingredient1 = parseInput!(inputs[1], i32);
             let ingredient2 = parseInput!(inputs[2], i32);
             let ingredient3 = parseInput!(inputs[3], i32);
-            let score = parseInput!(inputs[4], i32);
+            let score = parseInput!(inputs[4], Score);
 
             gameState.ingredients = [ingredient0, ingredient1, ingredient2, ingredient3];
             gameState.score = score;
@@ -188,8 +188,8 @@ enum Action
     Wait
 }
 
-type Price = i32;
-type Score = i32;
+type Price = u32;
+type Score = u32;
 type CastTimes = u32;
 
 fn runMonteCarloTreeSearch(gameState: &GameState) -> Vec<Action>
@@ -235,7 +235,10 @@ fn runMonteCarloTreeSearch(gameState: &GameState) -> Vec<Action>
 
 fn fillRootNode(rootNode: &Rc<RefCell<Node>>, gameState: &GameState)
 {
-    rootNode.borrow_mut().state = gameState.clone();
+    let mut rootNode = rootNode.borrow_mut();
+    rootNode.state = gameState.clone();
+    rootNode.state.potionsBrewed = 0;
+    rootNode.state.score = 0;
 }
 
 fn findBestChildNodeToExplore(parentNode: &Rc<RefCell<Node>>, tree: &Tree) -> Option<Rc<RefCell<Node>>>
@@ -310,7 +313,7 @@ fn rollout(currentNode: &Rc<RefCell<Node>>) -> Score
     loop {
         let possibleActions = makePerformableActionsFromRecipes(&state);
         if isTerminalState(&state, &possibleActions) {
-            return calculateStateScore(&state);
+            return calculateStateValue(&state);
         }
 
         let action = chooseRandomAction(&possibleActions);
@@ -324,24 +327,22 @@ fn isTerminalState(state: &GameState, possibleActions: &[Action]) -> bool
 }
 
 const MAX_TURNS: u32 = 100;
-const MAX_POTIONS: u32 = 6;
+const MAX_POTIONS: u32 = 1;
 
 fn chooseRandomAction(actions: &[Action]) -> &Action
 {
     &actions[rand::random::<usize>() % actions.len()]
 }
 
-fn calculateStateScore(state: &GameState) -> Score
+fn calculateStateValue(state: &GameState) -> Score
 {
-    // TODO include potion's price and the state's current score in the output score
-    let mut score: Score = (state.potionsBrewed as Score) * 100;
+    let mut value: Score = 0;
+    value += state.score * 100;
+    value += (MAX_TURNS - state.turns) * state.potionsBrewed;
     for i in 0..state.ingredients.len() {
-        // score += state.ingredients[i] * ((i as Score)+1);
-        score += state.ingredients[i];
+        value += state.ingredients[i] as Score;
     }
-    // score -= state.exhaustedSpells.len() as Score;
-    // score -= state.turns as Score;
-    score
+    value
 }
 
 fn backpropagate(currentNode: &Rc<RefCell<Node>>, score: Score, tree: &Tree)
@@ -433,7 +434,7 @@ struct GameState
 {
     ingredients: Ingredients,
     recipes: Recipes,
-    score: i32,
+    score: Score,
     potionsBrewed: u32,
     turns: u32
 }
@@ -523,7 +524,7 @@ fn makePerformableActionsFromRecipes(gameState: &GameState) -> Vec<Action>
 
 fn makePerformableActionsFromBrewRecipe(recipe: &BrewRecipe, gameState: &GameState) -> Vec<Action>
 {
-    if canBrewRecipe(&recipe.ingredientsDelta, &gameState.ingredients) {
+    if canBrewRecipe(recipe.id, &recipe.ingredientsDelta, gameState) {
         vec![Action::Brew{id: recipe.id, ingredientsDelta: recipe.ingredientsDelta, price: recipe.price}]
     } else {
         vec![]
@@ -587,7 +588,7 @@ fn pushIfCanPerformAction(action: Action, actions: &mut Vec<Action>, gameState: 
 fn canPerformAction(action: &Action, state: &GameState) -> bool
 {
     match action {
-        Action::Brew{id: _, ingredientsDelta: recipeIngredientsDelta, price: _} => canBrewRecipe(recipeIngredientsDelta, &state.ingredients),
+        Action::Brew{id, ingredientsDelta: recipeIngredientsDelta, price: _} => canBrewRecipe(*id, recipeIngredientsDelta, state),
         Action::Cast{idOpt: _, ingredientsDelta: spellIngredientsDelta, times} => canCastSpell(spellIngredientsDelta, *times, state),
         Action::Learn{id, ingredientsDelta: _, repeatable: _, readAheadTax} => canLearnSpell(*id, *readAheadTax, state),
         Action::Rest => canRest(&state.recipes.casting),
@@ -595,9 +596,12 @@ fn canPerformAction(action: &Action, state: &GameState) -> bool
     }
 }
 
-fn canBrewRecipe(recipeIngredientsDelta: &IngredientsDelta, ownedIngredients: &Ingredients) -> bool
+fn canBrewRecipe(id: Id, recipeIngredientsDelta: &IngredientsDelta, gameState: &GameState) -> bool
 {
-    for (recipeIngredientDelta, ownedIngredient) in recipeIngredientsDelta.into_iter().zip(ownedIngredients) {
+    if gameState.recipes.brewing.iter().find(|recipe| recipe.id == id).is_none() {
+        return false;
+    }
+    for (recipeIngredientDelta, ownedIngredient) in recipeIngredientsDelta.into_iter().zip(&gameState.ingredients) {
         if recipeIngredientDelta.abs() > *ownedIngredient {
             return false;
         }
