@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use std::cell::RefCell;
+use std::cmp::min;
 use std::ops::DerefMut;
 use std::io::stdin;
 use std::ops::Deref;
@@ -37,7 +38,7 @@ fn main()
             let delta3 = parseInput!(inputs[5], i32);
             let price = parseInput!(inputs[6], Price);
             let readAheadTaxOrUrgencyBonus = parseInput!(inputs[7], i32);
-            let _taxCountOrUrgencyBonusCount = parseInput!(inputs[8], i32);
+            let taxCountOrUrgencyBonusCount = parseInput!(inputs[8], i32);
             let castable = toBool(parseInput!(inputs[9], i32));
             let repeatable = toBool(parseInput!(inputs[10], i32));
 
@@ -47,6 +48,7 @@ fn main()
                 [delta0, delta1, delta2, delta3],
                 price,
                 readAheadTaxOrUrgencyBonus,
+                taxCountOrUrgencyBonusCount,
                 castable,
                 repeatable);
         }
@@ -163,7 +165,8 @@ struct LearnRecipe
     id: Id,
     ingredientsDelta: IngredientsDelta,
     repeatable: bool,
-    readAheadTax: u32
+    readAheadTax: ReadAheadTax,
+    taxCount: TaxCount
 }
 
 #[derive(Clone, Debug)]
@@ -177,12 +180,13 @@ struct CastRecipe
 
 type Id = u32;
 type ReadAheadTax = u32;
+type TaxCount = u32;
 
 #[derive(Clone, Debug)]
 enum Action
 {
     Brew{id: Id, ingredientsDelta: IngredientsDelta, price: Price},
-    Learn{id: Id, ingredientsDelta: IngredientsDelta, repeatable: bool, readAheadTax: ReadAheadTax},
+    Learn{id: Id, ingredientsDelta: IngredientsDelta, repeatable: bool, readAheadTax: ReadAheadTax, taxCount: TaxCount},
     Cast{idOpt: Option<Id>, ingredientsDelta: IngredientsDelta, times: CastTimes},
     Rest,
     Wait
@@ -453,6 +457,7 @@ impl GameState
         ingredientsDelta: IngredientsDelta,
         price: Price,
         readAheadTaxOrUrgencyBonus: i32,
+        taxCountOrUrgencyBonusCount: i32,
         castable: bool,
         repeatable: bool)
     {
@@ -460,7 +465,11 @@ impl GameState
             "BREW"  => self.recipes.brewing.push(BrewRecipe{id, ingredientsDelta, price}),
             "CAST"  => self.recipes.casting.push(CastRecipe{idOpt: Some(id), ingredientsDelta, castable, repeatable}),
             "LEARN" => self.recipes.learning.push(LearnRecipe{
-                id, ingredientsDelta, repeatable, readAheadTax: readAheadTaxOrUrgencyBonus as ReadAheadTax}),
+                id,
+                ingredientsDelta,
+                repeatable,
+                readAheadTax: readAheadTaxOrUrgencyBonus as ReadAheadTax,
+                taxCount: taxCountOrUrgencyBonusCount as TaxCount}),
             _ => panic!("unexpected action recipe kind: {}", kind)
         }
     }
@@ -486,6 +495,15 @@ impl GameState
     fn countRecipes(&self) -> usize
     {
         self.recipes.brewing.len() + self.recipes.learning.len() + self.recipes.casting.len()
+    }
+
+    fn countIngredients(&self) -> u32
+    {
+        let mut sum = 0;
+        for ingredient in &self.ingredients {
+            sum += *ingredient as u32;
+        }
+        sum
     }
 }
 
@@ -560,7 +578,8 @@ fn makePerformableActionsFromLearnRecipe(recipe: &LearnRecipe, gameState: &GameS
             id: recipe.id,
             ingredientsDelta: recipe.ingredientsDelta,
             repeatable: recipe.repeatable,
-            readAheadTax: recipe.readAheadTax}]
+            readAheadTax: recipe.readAheadTax,
+            taxCount: recipe.taxCount}]
     } else {
         vec![]
     }
@@ -590,7 +609,7 @@ fn canPerformAction(action: &Action, state: &GameState) -> bool
     match action {
         Action::Brew{id, ingredientsDelta: recipeIngredientsDelta, price: _} => canBrewRecipe(*id, recipeIngredientsDelta, state),
         Action::Cast{idOpt: _, ingredientsDelta: spellIngredientsDelta, times} => canCastSpell(spellIngredientsDelta, *times, state),
-        Action::Learn{id, ingredientsDelta: _, repeatable: _, readAheadTax} => canLearnSpell(*id, *readAheadTax, state),
+        Action::Learn{id, ingredientsDelta: _, repeatable: _, readAheadTax, taxCount: _} => canLearnSpell(*id, *readAheadTax, state),
         Action::Rest => canRest(&state.recipes.casting),
         Action::Wait => true
     }
@@ -620,12 +639,12 @@ fn canCastSpell(spellIngredientsDelta: &IngredientsDelta, times: u32, gameState:
     for _ in 0..times {
         applyDelta(&mut ownedIngredients, spellIngredientsDelta);
 
-        let mut ingredientsCount = 0;
+        let mut ingredientsCount = 0u32;
         for ingredient in &ownedIngredients {
             if *ingredient < 0 {
                 return false;
             }
-            ingredientsCount += ingredient;
+            ingredientsCount += *ingredient as u32;
         }
         if ingredientsCount > MAX_INGREDIENT_COUNT {
             return false;
@@ -657,7 +676,7 @@ fn isSpellExhausted(ingredientsDelta: &IngredientsDelta, gameState: &GameState) 
         recipe.ingredientsDelta == *ingredientsDelta && !recipe.castable).is_some()
 }
 
-const MAX_INGREDIENT_COUNT: i32 = 10;
+const MAX_INGREDIENT_COUNT: u32 = 10;
 
 fn calculateGameStateAfterAction(currentState: &GameState, action: &Action) -> GameState
 {
@@ -674,7 +693,7 @@ fn calculateGameStateAfterAction(currentState: &GameState, action: &Action) -> G
             }
             exhaustSpell(ingredientsDelta, &mut newState);
         },
-        Action::Learn{id: _, ingredientsDelta, repeatable, readAheadTax} => {
+        Action::Learn{id: _, ingredientsDelta, repeatable, readAheadTax, taxCount} => {
             let spellIndex = *readAheadTax as usize;
             newState.recipes.learning.remove(spellIndex);
             for recipe in &mut newState.recipes.learning[spellIndex..] {
@@ -682,9 +701,11 @@ fn calculateGameStateAfterAction(currentState: &GameState, action: &Action) -> G
             }
             newState.recipes.casting.push(
                 CastRecipe{idOpt: None, ingredientsDelta: *ingredientsDelta, castable: true, repeatable: *repeatable});
-            // TODO include taking taxCount here and in canPerformAction (check what are the rules if there are not enough slots in the inventory)
-            // TODO include giving out ingredients according to readAheadTax - need support for taxCount field
-            // TODO do tome spells appear in random order?
+            newState.ingredients[0] -= *readAheadTax as i32;
+            for recipe in &mut newState.recipes.learning[0..*readAheadTax as usize] {
+                recipe.taxCount += 1;
+            }
+            newState.ingredients[0] += min(MAX_INGREDIENT_COUNT - newState.countIngredients(), *taxCount) as i32;
         }
         Action::Rest => {
             refreshExhaustedSpells(&mut newState.recipes.casting)
