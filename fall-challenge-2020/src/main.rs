@@ -99,15 +99,27 @@ fn performAction(actionPlan: &mut ActionPlan, gameState: &mut GameState)
         Action::Brew{id, ..} => {
             println!("BREW {}", id);
             gameState.potionsBrewed += 1;
+            actionPlan.clear();
         },
-        Action::Cast{idOpt, ingredientsDelta, times} => performCast(idOpt, &ingredientsDelta, times, &gameState.recipes.casting),
-        Action::Learn{id, ..} => println!("LEARN {}", id),
-        Action::Rest => println!("REST"),
-        Action::Wait => println!("WAIT")
+        Action::Cast{idOpt, ingredientsDelta, times} => {
+            performCast(idOpt, &ingredientsDelta, times, &gameState.recipes.casting);
+            actionPlan.remove(0);
+        },
+        Action::Learn{id, ..} => {
+            println!("LEARN {}", id);
+            actionPlan.clear();
+            return;
+        },
+        Action::Rest => {
+            println!("REST");
+            actionPlan.remove(0);
+        },
+        Action::Wait => {
+            println!("WAIT");
+            actionPlan.remove(0);
+        }
     };
-    actionPlan.remove(0);
     gameState.turns += 1;
-
 }
 
 type ActionPlan = Vec<Action>;
@@ -320,7 +332,7 @@ fn rollout(currentNode: &Rc<RefCell<Node>>) -> Score
             return calculateStateValue(&state);
         }
 
-        let action = chooseRandomAction(&possibleActions);
+        let action = chooseRandomAction(&possibleActions, &state);
         state = calculateGameStateAfterAction(&state, action);
     }
 }
@@ -333,8 +345,15 @@ fn isTerminalState(state: &GameState, possibleActions: &[Action]) -> bool
 const MAX_TURNS: u32 = 100;
 const MAX_POTIONS: u32 = 1;
 
-fn chooseRandomAction(actions: &[Action]) -> &Action
+fn chooseRandomAction<'a>(actions: &'a [Action], gameState: &GameState) -> &'a Action
 {
+    for action in actions {
+        if let Action::Brew{id, ingredientsDelta, price: _} = action {
+            if canBrewRecipe(*id, ingredientsDelta, gameState) {
+                return action;
+            }
+        }
+    }
     &actions[rand::random::<usize>() % actions.len()]
 }
 
