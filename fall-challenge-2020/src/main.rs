@@ -74,7 +74,6 @@ fn main()
         }
 
         // TODO check if actionPlan contains Tome Spells to learn which are not available anymore
-        // TODO reset actionPlan when potion is brewed?
         if actionPlan.is_empty() || !canPerformAction(&actionPlan[0], &gameState) {
             eprintln!("AAA runMonteCarloTreeSearch");
             actionPlan = runMonteCarloTreeSearch(&gameState);
@@ -108,7 +107,6 @@ fn performAction(actionPlan: &mut ActionPlan, gameState: &mut GameState)
         Action::Learn{id, ..} => {
             println!("LEARN {}", id);
             actionPlan.clear();
-            return;
         },
         Action::Rest => {
             println!("REST");
